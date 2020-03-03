@@ -1,0 +1,50 @@
+# X10 build artifacts
+*.class
+*.java
+*.o
+*.so
+*.dylib
+*.a
+build/
+out/
+bin/
+
+# C build artifacts
+index/build/
+bridge/build/
+*.dSYM/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+.eggs/
+*.egg
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test artifacts
+tests/output/
+tests/tmp/
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Benchmark output
+bench/results/
