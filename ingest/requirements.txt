@@ -1,0 +1,5 @@
+# Convect Python dependencies
+# Ingestion layer, CLI, and terminal visualizers use Python standard library.
+# Optional development and testing tools:
+pytest>=7.0.0
+pytest-cov>=4.0.0
