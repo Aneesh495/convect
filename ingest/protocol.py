@@ -48,7 +48,7 @@ import struct
 import zlib
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
@@ -88,12 +88,12 @@ class MessageType(IntEnum):
 # Reading data class
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class Reading:
     """A single georeferenced sensor observation.
 
     This is the fundamental unit of data flowing through the Convect
-    pipeline.  Every field is required; adapters are responsible for
+    pipeline. Every field is required; adapters are responsible for
     filling in defaults when the source data is sparse.
 
     Attributes:
@@ -113,6 +113,54 @@ class Reading:
     metric: str
     value: float
     quality: int = 1
+
+    def __init__(
+        self,
+        sensor_id: str,
+        lat: Optional[float] = None,
+        lon: Optional[float] = None,
+        timestamp: int = 0,
+        metric: str = "temperature",
+        value: float = 0.0,
+        quality: int = 1,
+        *,
+        latitude: Optional[float] = None,
+        longitude: Optional[float] = None,
+    ) -> None:
+        self.sensor_id = str(sensor_id)
+        if latitude is not None:
+            self.lat = float(latitude)
+        elif lat is not None:
+            self.lat = float(lat)
+        else:
+            self.lat = 0.0
+
+        if longitude is not None:
+            self.lon = float(longitude)
+        elif lon is not None:
+            self.lon = float(lon)
+        else:
+            self.lon = 0.0
+
+        self.timestamp = int(timestamp)
+        self.metric = str(metric)
+        self.value = float(value)
+        self.quality = int(quality)
+
+    @property
+    def latitude(self) -> float:
+        return self.lat
+
+    @property
+    def longitude(self) -> float:
+        return self.lon
+
+
+@dataclass(frozen=True)
+class FrameHeader:
+    version: int
+    msg_type: MessageType
+    length: int
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +365,67 @@ class ConvectProtocol:
 
         # Unreachable if MessageType covers all cases, but defensive.
         raise ValueError(f"Unhandled message type: {msg_type}")  # pragma: no cover
+
+    # ---- compatibility aliases ---------------------------------------------
+
+    @classmethod
+    def serialize_reading(cls, reading: Reading) -> bytes:
+        return cls.encode_reading(reading)
+
+    @classmethod
+    def serialize_batch(cls, readings: List[Reading]) -> bytes:
+        return cls.encode_batch(readings)
+
+    @classmethod
+    def serialize_heartbeat(cls, sequence_num: int = 0) -> bytes:
+        return cls.encode_heartbeat(sequence_num)
+
+    @classmethod
+    def deserialize_reading(cls, payload: bytes) -> Reading:
+        r, _ = cls._decode_reading_payload(payload, 0)
+        return r
+
+    @classmethod
+    def deserialize_batch(cls, payload: bytes) -> List[Reading]:
+        (count,) = struct.unpack_from("!I", payload, 0)
+        offset = 4
+        res: List[Reading] = []
+        for _ in range(count):
+            r, offset = cls._decode_reading_payload(payload, offset)
+            res.append(r)
+        return res
+
+    @classmethod
+    def deserialize_heartbeat(cls, payload: bytes) -> int:
+        (ts,) = struct.unpack_from("!q", payload, 0)
+        return ts
+
+    @classmethod
+    def deserialize_frame(cls, data: bytes) -> Tuple[FrameHeader, bytes]:
+        if len(data) < _HEADER_SIZE + _CRC_SIZE:
+            raise ValueError(f"Buffer too short: {len(data)}")
+
+        magic = data[:_MAGIC_SIZE]
+        if magic != MAGIC_BYTES:
+            raise ValueError(f"Invalid magic: expected 0x{MAGIC_BYTES.hex()}, got 0x{magic.hex()}")
+
+        (version,) = struct.unpack_from("!B", data, _MAGIC_SIZE)
+        (msg_type_raw,) = struct.unpack_from("!B", data, _MAGIC_SIZE + _VERSION_SIZE)
+        msg_type = MessageType(msg_type_raw)
+        (payload_len,) = struct.unpack_from("!I", data, _MAGIC_SIZE + _VERSION_SIZE + _TYPE_SIZE)
+
+        expected_total = _HEADER_SIZE + payload_len + _CRC_SIZE
+        if len(data) < expected_total:
+            raise ValueError(f"Buffer too short for frame: expected {expected_total}, got {len(data)}")
+
+        payload_start = _HEADER_SIZE
+        payload_end = payload_start + payload_len
+
+        frame_without_crc = data[:payload_end]
+        (crc_received,) = struct.unpack_from("!I", data, payload_end)
+        crc_computed = zlib.crc32(frame_without_crc) & 0xFFFFFFFF
+        if crc_received != crc_computed:
+            raise ValueError(f"CRC32 mismatch: {crc_received} vs {crc_computed}")
+
+        header = FrameHeader(version=version, msg_type=msg_type, length=payload_len)
+        return header, data[payload_start:payload_end]
