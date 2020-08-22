@@ -17,9 +17,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from typing import List, Tuple
+
+# Ensure repository root is on sys.path
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
 
 from cli.formatter import TableFormatter, SummaryStats
 from cli.visualize import TerminalVisualizer
