@@ -17,6 +17,8 @@
 #include "../../index/geohash/geohash.h"
 #include "../../index/quadtree/quadtree.h"
 #include "../../index/hilbert/hilbert.h"
+#include "../../index/h3/h3_lite.h"
+#include "../../index/lsm/spatial_lsm.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -352,6 +354,111 @@ static void test_hilbert(void) {
 }
 
 /* --------------------------------------------------------------------------
+ * Section 6: Hexagonal DGGS (H3) Tests
+ * -------------------------------------------------------------------------- */
+
+static void test_h3(void) {
+    printf("[6/7] Testing H3 hexagonal discrete global grid system...\n");
+
+    double lat = 37.7749;
+    double lon = -122.4194;
+    int res = 7;
+
+    convect_h3_index_t h3 = convect_h3_from_geo(lat, lon, res);
+    TEST_ASSERT(h3 != CONVECT_H3_NULL, "H3 index should not be null");
+    TEST_ASSERT(convect_h3_get_resolution(h3) == 7, "H3 resolution should be 7");
+
+    int base = convect_h3_get_base_cell(h3);
+    TEST_ASSERT(base >= 0 && base < 122, "Base cell should be in range 0..121");
+
+    double dec_lat = 0.0;
+    double dec_lon = 0.0;
+    bool ok = convect_h3_to_geo(h3, &dec_lat, &dec_lon);
+    TEST_ASSERT(ok, "H3 to geo decoding should succeed");
+    TEST_ASSERT(fabs(lat - dec_lat) < 0.5, "Decoded latitude should be close to original");
+    TEST_ASSERT(fabs(lon - dec_lon) < 0.5, "Decoded longitude should be close to original");
+
+    /* Parent at resolution 5 */
+    convect_h3_index_t parent = convect_h3_to_parent(h3, 5);
+    TEST_ASSERT(convect_h3_get_resolution(parent) == 5, "Parent resolution should be 5");
+    TEST_ASSERT(convect_h3_get_base_cell(parent) == base, "Parent base cell should match");
+
+    /* Immediate neighbors */
+    convect_h3_index_t neighbors[6];
+    int n_count = convect_h3_get_neighbors(h3, neighbors);
+    TEST_ASSERT(n_count == 6, "H3 hex cell should have 6 neighbors");
+
+    /* K-ring */
+    convect_h3_index_t k0[1];
+    int c0 = convect_h3_k_ring(h3, 0, k0, 1);
+    TEST_ASSERT(c0 == 1 && k0[0] == h3, "K-ring of radius 0 should return origin");
+
+    convect_h3_index_t k1[10];
+    int c1 = convect_h3_k_ring(h3, 1, k1, 10);
+    TEST_ASSERT(c1 == 7, "K-ring of radius 1 should return 7 cells");
+
+    /* String roundtrip */
+    char h3_str[32];
+    convect_h3_to_string(h3, h3_str, sizeof(h3_str));
+    TEST_ASSERT(strlen(h3_str) == 16, "H3 hex string should be 16 chars");
+
+    convect_h3_index_t parsed = convect_h3_from_string(h3_str);
+    TEST_ASSERT(parsed == h3, "Parsed H3 string should match original index");
+}
+
+/* --------------------------------------------------------------------------
+ * Section 7: Spatial LSM MemTable Tests
+ * -------------------------------------------------------------------------- */
+
+static void test_lsm(void) {
+    printf("[7/7] Testing Spatial LSM MemTable and Bloom filters...\n");
+
+    convect_lsm_memtable_t *mem = convect_lsm_memtable_create(500);
+    TEST_ASSERT(mem != NULL, "MemTable creation should succeed");
+    TEST_ASSERT(mem->size == 0, "Initial MemTable size should be 0");
+
+    /* Insert records */
+    convect_spatial_record_t r1;
+    r1.spatial_key = convect_lsm_make_key(37.77, -122.42, 1600000000000LL);
+    r1.timestamp_ms = 1600000000000LL;
+    r1.lat = 37.77;
+    r1.lon = -122.42;
+    r1.value = 42.5;
+    strncpy(r1.sensor_id, "sensor_alpha", sizeof(r1.sensor_id) - 1);
+
+    bool put_ok = convect_lsm_memtable_put(mem, &r1);
+    TEST_ASSERT(put_ok, "MemTable put should succeed");
+    TEST_ASSERT(mem->size == 1, "MemTable size should be 1");
+
+    /* Point lookup */
+    convect_spatial_record_t fetched;
+    bool get_ok = convect_lsm_memtable_get(mem, r1.spatial_key, &fetched);
+    TEST_ASSERT(get_ok, "MemTable get should find key");
+    TEST_ASSERT(strcmp(fetched.sensor_id, "sensor_alpha") == 0, "Fetched sensor ID matches");
+    TEST_ASSERT(fabs(fetched.value - 42.5) < 1.0e-6, "Fetched value matches");
+
+    /* Non-existent key lookup */
+    bool non_exist = convect_lsm_memtable_get(mem, 0x1234567890ABCDEFULL, &fetched);
+    TEST_ASSERT(!non_exist, "MemTable get for missing key should return false");
+
+    /* Range scan */
+    convect_spatial_record_t r2;
+    r2.spatial_key = r1.spatial_key + 10;
+    r2.timestamp_ms = 1600000000010LL;
+    r2.lat = 37.78;
+    r2.lon = -122.41;
+    r2.value = 55.0;
+    strncpy(r2.sensor_id, "sensor_beta", sizeof(r2.sensor_id) - 1);
+    convect_lsm_memtable_put(mem, &r2);
+
+    convect_spatial_record_t scan_results[10];
+    size_t scanned = convect_lsm_memtable_scan(mem, r1.spatial_key, r2.spatial_key + 1, scan_results, 10);
+    TEST_ASSERT(scanned == 2, "Range scan should find both inserted records");
+
+    convect_lsm_memtable_free(mem);
+}
+
+/* --------------------------------------------------------------------------
  * Main Runner
  * -------------------------------------------------------------------------- */
 
@@ -365,6 +472,8 @@ int main(void) {
     test_geohash();
     test_quadtree();
     test_hilbert();
+    test_h3();
+    test_lsm();
 
     printf("\n----------------------------------------------------\n");
     printf("Tests run: %d | Passed: %d | Failed: %d\n",

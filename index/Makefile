@@ -19,7 +19,9 @@ SRCS := spatial_types.c \
         rtree/rtree.c \
         geohash/geohash.c \
         quadtree/quadtree.c \
-        hilbert/hilbert.c
+        hilbert/hilbert.c \
+        h3/h3_lite.c \
+        lsm/spatial_lsm.c
 
 OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 
@@ -28,7 +30,7 @@ OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(SRCS))
 all: $(STATIC_LIB) $(SHARED_LIB)
 
 $(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)/rtree $(BUILD_DIR)/geohash $(BUILD_DIR)/quadtree $(BUILD_DIR)/hilbert
+	mkdir -p $(BUILD_DIR)/rtree $(BUILD_DIR)/geohash $(BUILD_DIR)/quadtree $(BUILD_DIR)/hilbert $(BUILD_DIR)/h3 $(BUILD_DIR)/lsm
 
 $(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
 	$(CC) $(CFLAGS) -c $< -o $@
