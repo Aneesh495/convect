@@ -47,7 +47,7 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass
-from enum import IntEnum
+from enum import Enum, IntEnum
 from typing import Any, Dict, List, Optional, Tuple
 
 
@@ -82,6 +82,17 @@ class MessageType(IntEnum):
     BATCH_READINGS = 0x02
     HEARTBEAT = 0x03
     CONTROL = 0x04
+
+
+class MetricType(str, Enum):
+    """Recognized spatiotemporal sensor metric families."""
+
+    TEMPERATURE = "temperature"
+    VELOCITY = "velocity"
+    PRESSURE = "pressure"
+    HUMIDITY = "humidity"
+    AIR_QUALITY = "air_quality"
+    WIND_SPEED = "wind_speed"
 
 
 # ---------------------------------------------------------------------------
@@ -126,6 +137,8 @@ class Reading:
         *,
         latitude: Optional[float] = None,
         longitude: Optional[float] = None,
+        timestamp_ms: Optional[int] = None,
+        metric_type: Optional[Any] = None,
     ) -> None:
         self.sensor_id = str(sensor_id)
         if latitude is not None:
@@ -142,8 +155,16 @@ class Reading:
         else:
             self.lon = 0.0
 
-        self.timestamp = int(timestamp)
-        self.metric = str(metric)
+        if timestamp_ms is not None:
+            self.timestamp = int(timestamp_ms)
+        else:
+            self.timestamp = int(timestamp)
+
+        if metric_type is not None:
+            self.metric = str(metric_type.value if hasattr(metric_type, "value") else metric_type)
+        else:
+            self.metric = str(metric)
+
         self.value = float(value)
         self.quality = int(quality)
 
@@ -154,6 +175,10 @@ class Reading:
     @property
     def longitude(self) -> float:
         return self.lon
+
+    @property
+    def timestamp_ms(self) -> int:
+        return self.timestamp
 
 
 @dataclass(frozen=True)
