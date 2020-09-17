@@ -108,6 +108,31 @@ def load_spatial_library() -> Optional[ctypes.CDLL]:
                 ]
                 lib.point_distance_haversine.restype = ctypes.c_double
 
+                # H3 Discrete Global Grid bindings
+                lib.convect_h3_from_geo.argtypes = [ctypes.c_double, ctypes.c_double, ctypes.c_int]
+                lib.convect_h3_from_geo.restype = ctypes.c_uint64
+
+                lib.convect_h3_to_geo.argtypes = [
+                    ctypes.c_uint64,
+                    ctypes.POINTER(ctypes.c_double),
+                    ctypes.POINTER(ctypes.c_double),
+                ]
+                lib.convect_h3_to_geo.restype = ctypes.c_bool
+
+                lib.convect_h3_get_resolution.argtypes = [ctypes.c_uint64]
+                lib.convect_h3_get_resolution.restype = ctypes.c_int
+
+                lib.convect_h3_to_parent.argtypes = [ctypes.c_uint64, ctypes.c_int]
+                lib.convect_h3_to_parent.restype = ctypes.c_uint64
+
+                lib.convect_h3_k_ring.argtypes = [
+                    ctypes.c_uint64,
+                    ctypes.c_int,
+                    ctypes.POINTER(ctypes.c_uint64),
+                    ctypes.c_int,
+                ]
+                lib.convect_h3_k_ring.restype = ctypes.c_int
+
                 return lib
             except Exception:
                 pass
@@ -213,3 +238,74 @@ class X10RuntimeCluster:
             consolidated.extend(results[pid])
 
         return consolidated
+
+    def geo_to_h3(self, lat: float, lon: float, res: int = 7) -> int:
+        """Encode coordinate into 64-bit H3 index."""
+        if self.lib:
+            return int(self.lib.convect_h3_from_geo(lat, lon, res))
+        return hash((round(lat, 4), round(lon, 4), res)) & 0xFFFFFFFFFFFFFFFF
+
+    def h3_to_geo(self, h3: int) -> Tuple[float, float]:
+        """Decode 64-bit H3 index into (lat, lon)."""
+        if self.lib:
+            lat = ctypes.c_double()
+            lon = ctypes.c_double()
+            ok = self.lib.convect_h3_to_geo(h3, ctypes.byref(lat), ctypes.byref(lon))
+            if ok:
+                return (lat.value, lon.value)
+        return (0.0, 0.0)
+
+    def h3_k_ring(self, origin: int, k: int = 1) -> List[int]:
+        """Return k-ring neighbor cells around origin."""
+        if self.lib and k >= 0:
+            max_cells = 1 + 3 * k * (k + 1) + 10
+            buf = (ctypes.c_uint64 * max_cells)()
+            count = self.lib.convect_h3_k_ring(origin, k, buf, max_cells)
+            return [int(buf[i]) for i in range(count)]
+        return [origin]
+
+    def simulate_plume_advection(
+        self,
+        readings: List[Reading],
+        bounds: Tuple[float, float, float, float],
+        steps: int = 10,
+        dt: float = 1.0,
+        u_wind: float = 2.0,
+        v_wind: float = 0.0,
+        diff_coeff: float = 0.5,
+    ) -> List[List[float]]:
+        """
+        Simulate 2D finite difference atmospheric advection-dispersion plume transport.
+        Returns 2D scalar concentration matrix.
+        """
+        nx, ny = 20, 20
+        min_lat, min_lon, max_lat, max_lon = bounds
+        grid = [[0.0 for _ in range(ny)] for _ in range(nx)]
+
+        # Inject initial sensor readings into grid
+        for r in readings:
+            if min_lat <= r.latitude <= max_lat and min_lon <= r.longitude <= max_lon:
+                fx = (r.longitude - min_lon) / max(1e-9, max_lon - min_lon)
+                fy = (r.latitude - min_lat) / max(1e-9, max_lat - min_lat)
+                ix = min(nx - 1, max(0, int(fx * nx)))
+                iy = min(ny - 1, max(0, int(fy * ny)))
+                grid[ix][iy] = max(grid[ix][iy], r.value)
+
+        # 2D stencil time stepping
+        for _ in range(steps):
+            next_grid = [[grid[x][y] for y in range(ny)] for x in range(nx)]
+            for i in range(1, nx - 1):
+                for j in range(1, ny - 1):
+                    # Diffusion
+                    diff = diff_coeff * dt * (
+                        grid[i + 1][j] + grid[i - 1][j] + grid[i][j + 1] + grid[i][j - 1] - 4.0 * grid[i][j]
+                    )
+                    # Upwind advection
+                    adv_x = -u_wind * dt * (grid[i][j] - grid[i - 1][j]) if u_wind >= 0 else 0.0
+                    adv_y = -v_wind * dt * (grid[i][j] - grid[i][j - 1]) if v_wind >= 0 else 0.0
+
+                    val = grid[i][j] + diff + adv_x + adv_y
+                    next_grid[i][j] = max(0.0, val)
+            grid = next_grid
+
+        return grid

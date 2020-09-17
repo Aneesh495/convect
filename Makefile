@@ -23,7 +23,7 @@ test-python:
 	python3 -m unittest discover -s tests/python -v
 
 test-integration: index
-	python3 -m unittest tests/integration/test_end_to_end.py -v
+	python3 -m unittest discover -s tests/integration -v
 
 bench: index
 	@echo "Running C Spatial Index Benchmark..."
