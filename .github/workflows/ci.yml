@@ -1,0 +1,65 @@
+name: Convect CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Verify zero em dash constraint
+        run: |
+          python3 -c "
+          import os, sys
+          violations = []
+          for root, dirs, files in os.walk('.'):
+              if '.git' in root or 'build' in root or '__pycache__' in root:
+                  continue
+              for f in files:
+                  path = os.path.join(root, f)
+                  try:
+                      with open(path, 'r', encoding='utf-8') as fh:
+                          for idx, line in enumerate(fh, 1):
+                              if '\u2014' in line or '\u2013' in line:
+                                  violations.append((path, idx, line.strip()))
+                  except Exception:
+                      pass
+          if violations:
+              print(f'FAILURE: Found {len(violations)} em dash violations!')
+              for p, idx, l in violations[:10]:
+                  print(f'{p}:{idx}: {l}')
+              sys.exit(1)
+          print('SUCCESS: Zero em dash violations confirmed.')
+          "
+
+      - name: Build C spatial indexing engine
+        run: make -C index all
+
+      - name: Run C spatial index unit test suite
+        run: make -C index test
+
+      - name: Run Python unit and adapter test suite
+        run: make test-python
+
+      - name: Run PGAS integration and simulation test suite
+        run: make test-integration
+
+      - name: Run spatial and stream throughput benchmarks
+        run: make bench
