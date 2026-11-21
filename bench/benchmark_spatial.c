@@ -13,6 +13,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include "../index/spatial_types.h"
 #include "../index/rtree/rtree.h"
 #include "../index/geohash/geohash.h"
