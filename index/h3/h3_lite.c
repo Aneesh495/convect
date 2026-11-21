@@ -11,6 +11,10 @@
 #include <string.h>
 #include <math.h>
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 #define H3_MODE_INDEX 1ULL
 #define H3_MODE_OFFSET 59
 #define H3_RES_OFFSET 52
