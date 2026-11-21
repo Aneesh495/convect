@@ -334,7 +334,9 @@ char **geohash_cover_bbox(const spatial_bbox_t *bbox, size_t precision, size_t *
 
     size_t cap = 32;
     size_t count = 0;
-    char **result = (char **)malloc(cap * sizeof(char *));
+    char **result = malloc(cap * sizeof(*result));
+    *out_count = 0;
+    if (!result) return NULL;
 
     double step_lat = clat * 0.8;
     double step_lon = clon * 0.8;
@@ -353,10 +355,16 @@ char **geohash_cover_bbox(const spatial_bbox_t *bbox, size_t precision, size_t *
                 }
                 if (!exists) {
                     if (count >= cap) {
+                        if (cap > SIZE_MAX / sizeof(*result) / 2) goto allocation_failed;
                         cap *= 2;
-                        result = (char **)realloc(result, cap * sizeof(char *));
+                        char **grown = realloc(result, cap * sizeof(*result));
+                        if (!grown) goto allocation_failed;
+                        result = grown;
                     }
-                    result[count] = strdup(buf);
+                    size_t length = precision + 1;
+                    result[count] = malloc(length);
+                    if (!result[count]) goto allocation_failed;
+                    memcpy(result[count], buf, length);
                     count++;
                 }
             }
@@ -365,4 +373,11 @@ char **geohash_cover_bbox(const spatial_bbox_t *bbox, size_t precision, size_t *
 
     *out_count = count;
     return result;
+
+allocation_failed:
+    for (size_t i = 0; i < count; i++) {
+        free(result[i]);
+    }
+    free(result);
+    return NULL;
 }
